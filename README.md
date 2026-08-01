@@ -1,5 +1,5 @@
-# 세이버-K (SABER-K)
-**Statistical Analysis of Budget Execution Risk — 계층적 정규화 기반 예산 불용 조기경보 체계**
+# 세이버
+**SABER (Statistical Analysis of Budget Execution Risk — 계층적 정규화 기반 예산 불용 조기경보 체계)**
 
 2026 제3차 국방 AI 활용 아이디어 경연대회 출품작의 공개 데이터 검증 코드입니다.
 군도(軍刀)를 뜻하는 이름 그대로, 연말에 발생할 예산 불용 위험을 분기 시점에 미리 베어내는 것을 목표로 합니다.
@@ -72,8 +72,5 @@ python evaluate.py
 - Rudin (2019), "Stop explaining black box machine learning models for high stakes decisions...", *Nature Machine Intelligence*
 - Kim, Jeong, Kwak (2023), "HIER: Metric Learning Beyond Class Labels via Hierarchical Regularization", CVPR — 계층 구조의 명시적 반영 원리의 딥러닝 측 사례 (장기 확장 로드맵에서 비정형 데이터에 접목 검토)
 
-## 라이선스·유의사항
-
-- 코드: MIT License
-- 본 검증은 공개 데이터 기반 방법론 실증이며, 군 데이터·군 체계와 무관합니다.
+## 유의사항
 - 성능 수치는 위 백테스트 설계 기준이며 `evaluate.py`로 전 과정 재현 가능합니다.
