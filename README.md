@@ -1,30 +1,30 @@
-# 세이버
-**SABER (Statistical Analysis of Budget Execution Risk — 계층적 정규화 기반 예산 불용 조기경보 체계)**
+# SABER (Statistical Analysis of Budget Execution Risk)
 
-2026 제3차 국방 AI 활용 아이디어 경연대회 출품작의 공개 데이터 검증 코드입니다.
-군도(軍刀)를 뜻하는 이름 그대로, 연말에 발생할 예산 불용 위험을 분기 시점에 미리 베어내는 것을 목표로 합니다.
+**세이버: 계층적 정규화 기반 예산 불용 조기경보 모형**
 
-본 저장소의 data/ 데이터는 **행정안전부 지방재정365 공개 데이터**이며, 군 데이터가 아닙니다.
+
+부대·세부사업 단위의 예산 집행률을 예측해 "연말에 남을 예산(불용)"을 3분기 시점에 미리
+찾아내는 경량 머신러닝 모형이다. 공개 재정 데이터(행정안전부 지방재정365, 2016–2025)로
+백테스트한 결과, 기존 방식(개별 추정·전년도 집행률) 대비 불용 규모 예측오차(RMSE)를
+20–25% 낮추고, 이력이 없어 기존 방식으로는 예측조차 불가능한 신규 사업(매년 약 20%)까지
+예측 범위에 포함했다.
 
 ## 핵심 아이디어
 
-부대×세부사업 단위의 예산 집행 이력은 극단적 소표본(조합당 수 년치)이라 딥러닝이 작동하지 않습니다.
-세이버-K는 조직·예산 체계가 본래 지닌 **계층 구조**를 모형에 직접 반영하는
-**계층적 정규화(Hierarchical Regularization, 부분 풀링)** 로 이 문제를 풉니다.
+예산 데이터는 '부대→상급 제대→기관' 및 '세부사업→단위사업→분야'라는 계층 구조를 갖는다.
+그런데 개별 부대×사업 단위로 내려가면 이력이 수 년치에 불과한 극단적 소표본이라, 단순 외삽도
+딥러닝도 잘 맞지 않는다. SABER-K는 계층적 정규화(partial pooling)로 이 문제를 푼다.
 
-1. **교차 계층 앵커** — 같은 사업 유형의 타 기관 이력 + 소속 기관 특성 결합 → 이력 0년 신규 사업도 예측 (콜드 스타트 해소)
-2. **정보량 비례 축소** — 이력이 짧을수록 집단 정보를, 길수록 자기 이력을 더 반영 (검증 연도에서 축소계수를 회귀로 추정)
-3. **최신성 결합** — 지수 감쇠 가중으로 직전 연도 실적을 상태로 통합
+- **교차 계층 앵커**: 전체 평균에 '같은 사업명 효과'와 '소속 기관 효과'를 더해, 이력이 없는
+  신규 사업도 상위 계층 정보로 예측한다(콜드 스타트 해소).
+- **최신성 가중 개별 신호**: 직전 연도 실적에 더 큰 가중을 두는 지수 감쇠 평균으로 최근 추세를 반영.
+- **정보량 비례 축소**: 이력이 짧을수록 집단 정보(앵커)를, 길수록 자기 이력을 더 신뢰하도록
+  축소 강도를 '검증 연도'에서 회귀로 추정한다.
 
-GPU 불필요, 순수 오픈소스(Python), 모든 예측이 해석 가능 — 보안·설명책임이 요구되는 행정 환경을 위한 설계입니다.
+GPU가 필요 없고 pandas·numpy만으로 돌아가는 경량 모형이라, 일반 사무용 서버에서도 전국 규모
+데이터를 몇 초 만에 처리한다.
 
-## 검증 결과 (2025년 42.4만 개 세부사업 백테스트)
-
-전국 지방자치단체 세출 결산 10개년: 2016-2025, 약 376만 건
-
-
-2016-2023 학습 → 2024 검증(하이퍼파라미터·축소계수 선정) → 2025 시험의 엄격한 시간 분할.
-
+## 검증 결과 (2025년 약 42만 개 세부사업 백테스트)
 
 | 예측오차 RMSE | SABER(계층) | 기존① 개별 추정 | 기존② 전년도 | 전체 평균 |
 |---|---|---|---|---|
@@ -33,47 +33,47 @@ GPU 불필요, 순수 오픈소스(Python), 모든 예측이 해석 가능 — �
 
 - 매년 전체 사업의 약 **20%는 이력 없는 신규 사업** → 기존 방식은 예측 자체가 불가능, SABER만 커버
 - 심각 불용(집행률<60%) 사업의 **32%가 신규 사업** → 기존 방식은 문제의 1/3에 구조적으로 눈이 멂
-- 분야별 개선 폭 최대: 국토·지역개발, 교통·물류, 문화·관광 등 **시설·인프라형 사업(24~25%)**
+- 분야별 개선 폭 최대: 국토·지역개발, 교통·물류, 문화·관광 등 **시설·인프라형 사업(24–25%)**
 
 ## 저장소 구조
-
-```
 ├── README.md
-├── baseline_models.py   # 기존 방식(개별 추정·전년도·전체 평균) 기준선
-├── saber_model.py       # SABER-K 계층 모형 (경험적 베이즈 근사 구현)
-├── evaluate.py          # 데이터 로드 → 백테스트 → 성능 표·그림 생성
-└── data/
-    ├── dataset_2016_2017.zip   # 행안부 지방재정365 연도별 세부사업별 세출현황
-    ├── dataset_2018_2019.zip
-    ├── dataset_2020_2021.zip
-    ├── dataset_2022_2023.zip
-    └── dataset_2024_2025.zip
-```
+
+├── baseline_models.py # 기존 방식(개별 추정·전년도·전체 평균) 기준선
+
+├── saber_model.py # SABER 계층 모형 (+ 캐시 생성 함수 build_cache)
+
+├── evaluate.py # 데이터 로드 → 백테스트 → 성능 표·그림 생성
+
+└── data/ # 비어 있음 (.gitkeep). 실행 시 자동으로 채워짐
+
+데이터(원본 엑셀 zip 5개 + 전처리 캐시)는 용량이 커서 저장소에 포함하지 않고
+**공개 Google Drive 폴더**에 두었다. `evaluate.py`를 실행하면 `data/`가 비어 있을 때
+자동으로 내려받는다.
+
+- 데이터 폴더: https://drive.google.com/drive/folders/1455r3kIBEtm6gb0WTuAqWj4W6CmHADhR
+  - `panel_cache.pkl.gz` — 전처리 완료 캐시 (엑셀 파싱 없이 즉시 재현용)
+  - `dataset_2016_2017.zip` ~ `dataset_2024_2025.zip` — 원본 세출현황 (연 2개년 단위)
 
 ## 실행 방법
 
 ```bash
-pip install pandas numpy openpyxl matplotlib
-# data/ 폴더에 zip 5개를 넣은 뒤 (자동 압축 해제됨)
+pip install pandas numpy openpyxl matplotlib gdown
 python evaluate.py
 ```
 
-첫 실행 시 xlsx 로드에 5~10분 소요되며 이후 캐시(`data/panel_cache.pkl`)를 사용합니다.
-결과는 `results/` 폴더에 표(csv)와 그림(png)으로 저장됩니다.
+`data/`가 비어 있으면 `evaluate.py`가 위 Google Drive 폴더에서 데이터를 자동으로 내려받는다
+(`gdown` 필요). 내려받은 전처리 캐시(`panel_cache.pkl.gz`)를 사용하므로 백테스트는 몇 초 만에
+끝나고, 결과는 `results/` 폴더에 표(csv)·그림(png)으로 저장된다.
+
+이 캐시는 원본 엑셀을 코드로 전처리한 중간 결과물이며, 손으로 만든 데이터가 아니다.
+원본에서 직접 캐시를 재생성하려면 `data/`의 캐시 파일을 지우고 `dataset_*.zip` 5개를 둔 채
+`python -c "from saber_model import build_cache; build_cache()"` 를 실행하면 된다. 이 경우 xlsx
+10개를 파싱해 동일한 캐시를 새로 만들며, 파싱에는 수 분과 여유 메모리(8GB 이상 권장)가 필요하다.
+전처리 절차(열 선택 → 정제 → 사업 단위 집계 → 집행률 계산)는 `saber_model.py`의 `build_cache()`와
+`evaluate.py`의 `load_panel()`에 모두 공개되어 있어 누구나 동일하게 재현할 수 있다.
 
 ## 데이터 출처
 
 - 행정안전부, 지방재정365 「연도별 세부사업별 세출현황」, 공공데이터포털(data.go.kr) 개방 데이터
-- 본 저장소에는 원본 xlsx를 연 2개년 단위 zip으로 재배포 (공공누리 개방 데이터)
+- 원본 xlsx는 연 2개년 단위 zip으로 위 Google Drive 폴더에 재배포 (공공누리 개방 데이터)
 
-## 참고 문헌
-
-- Gelman & Hill (2007), *Data Analysis Using Regression and Multilevel/Hierarchical Models*, Cambridge Univ. Press
-- Grinsztajn et al. (2022), "Why do tree-based models still outperform deep learning on typical tabular data?", NeurIPS
-- Shwartz-Ziv & Armon (2022), "Tabular data: Deep learning is not all you need", *Information Fusion*
-- Makridakis et al. (2022), "M5 accuracy competition", *IJF*
-- Rudin (2019), "Stop explaining black box machine learning models for high stakes decisions...", *Nature Machine Intelligence*
-- Kim, Jeong, Kwak (2023), "HIER: Metric Learning Beyond Class Labels via Hierarchical Regularization", CVPR — 계층 구조의 명시적 반영 원리의 딥러닝 측 사례 (장기 확장 로드맵에서 비정형 데이터에 접목 검토)
-
-## 유의사항
-- 성능 수치는 위 백테스트 설계 기준이며 `evaluate.py`로 전 과정 재현 가능합니다.
