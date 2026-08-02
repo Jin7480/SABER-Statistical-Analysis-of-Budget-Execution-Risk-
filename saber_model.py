@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-saber_model.py — 세이버-K(SABER-K): 계층적 정규화 기반 예산 집행률 예측 모형
+saber_model.py — 세이버(SABER): 계층적 정규화 기반 예산 집행률 예측 모형
 Statistical Analysis of Budget Execution Risk
 
 핵심 구성 (경험적 베이즈 근사 구현):
