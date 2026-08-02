@@ -20,36 +20,93 @@ TRAIN_END, VAL_YEAR, TEST_YEAR = 2023, 2024, 2025
 BINS = [(0, 0), (1, 2), (3, 4), (5, 6), (7, 9)]
 LABELS = ['신규(0년)', '1~2년', '3~4년', '5~6년', '7~9년']
 
+# 원본 데이터(엑셀 zip 5개 + 전처리 캐시)가 담긴 Google Drive 공개 폴더 ID.
+# GitHub 용량 제한 때문에 데이터는 Drive에 두고, 실행 시 자동으로 내려받는다.
+GDRIVE_FOLDER_ID = '1455r3kIBEtm6gb0WTuAqWj4W6CmHADhR'
+
+
+def _ensure_data():
+    """data/ 폴더에 캐시나 원본이 없으면 Google Drive 공개 폴더에서 자동 다운로드한다."""
+    os.makedirs(DATA_DIR, exist_ok=True)
+    has_cache = os.path.exists(CACHE) or os.path.exists(CACHE + '.gz')
+    has_xlsx = bool(glob.glob(f'{DATA_DIR}/*_세부사업별세출현황.xlsx'))
+    has_zip = bool(glob.glob(f'{DATA_DIR}/dataset_*.zip'))
+    if has_cache or has_xlsx or has_zip:
+        return  # 이미 데이터가 있으면 다운로드하지 않음
+    try:
+        import gdown
+    except ImportError:
+        raise SystemExit(
+            "데이터가 없고 gdown이 설치되어 있지 않습니다.\n"
+            "  pip install gdown  을 실행하거나,\n"
+            "  Google Drive 폴더에서 파일을 직접 받아 data/ 에 넣어주세요.")
+    print('data/ 가 비어 있어 Google Drive에서 데이터를 내려받습니다 ...', flush=True)
+    gdown.download_folder(id=GDRIVE_FOLDER_ID, output=DATA_DIR,
+                          quiet=False, use_cookies=False)
+
 
 # ---------- 데이터 준비 ----------
 def load_panel() -> pd.DataFrame:
+    """연도별 xlsx를 순차 파싱→즉시 축약→디스크에 임시 저장한 뒤 마지막에 합쳐,
+    저사양(메모리 4GB급) 환경에서도 안전하게 전체 패널을 구성한다.
+    캐시(panel_cache.pkl)가 있으면 파싱을 건너뛴다."""
+    _ensure_data()  # data/ 가 비어 있으면 Google Drive에서 자동 다운로드
     if os.path.exists(CACHE):
         return pd.read_pickle(CACHE)
+    # 배포용 압축 캐시(panel_cache.pkl.gz)가 있으면 그것을 사용 (엑셀 파싱 불필요)
+    gz = CACHE + '.gz'
+    if os.path.exists(gz):
+        import gzip, pickle
+        with gzip.open(gz, 'rb') as f:
+            df = pickle.load(f)
+        df['uid'] = df['지역'].astype(str) + '|' + df['자치단체'].astype(str) + '|' \
+                    + df['회계'].astype(str) + '|' + df['사업명'].astype(str)
+        return df
+
+    # zip 자동 해제
     for z in glob.glob(f'{DATA_DIR}/dataset_*.zip'):
         with zipfile.ZipFile(z) as f:
             f.extractall(DATA_DIR)
-    rows = []
+
+    from openpyxl import load_workbook
+    tmp_dir = os.path.join(DATA_DIR, '_tmp_years')
+    os.makedirs(tmp_dir, exist_ok=True)
+    tmp_paths = []
     for path in sorted(glob.glob(f'{DATA_DIR}/*_세부사업별세출현황.xlsx')):
         year = int(os.path.basename(path)[:4])
-        print(f'로드 중: {year} ...')
-        df = pd.read_excel(path, header=None, skiprows=2,
-                           usecols=[0, 1, 2, 3, 4, 9, 11, 12],
-                           names=['지역', '자치단체', '회계', '사업명',
-                                  '예산현액', '지출액', '분야', '부문'])
-        df = df.dropna(subset=['지역', '사업명'])
-        df['연도'] = year
-        rows.append(df)
-    df = pd.concat(rows, ignore_index=True)
-    df['예산현액'] = pd.to_numeric(df['예산현액'], errors='coerce')
-    df['지출액'] = pd.to_numeric(df['지출액'], errors='coerce')
-    df = df.dropna(subset=['예산현액', '지출액'])
-    df = df[df['예산현액'] >= 1_000_000]  # 100만원 미만 미세 항목 제외
-    key = ['연도', '지역', '자치단체', '회계', '사업명']
-    df = df.groupby(key, as_index=False).agg(
-        {'예산현액': 'sum', '지출액': 'sum', '분야': 'first', '부문': 'first'})
+        print(f'로드 중: {year} ...', flush=True)
+        wb = load_workbook(path, read_only=True, data_only=True)
+        ws = wb.active
+        recs = []
+        for r in ws.iter_rows(min_row=3, values_only=True):
+            if r[0] is None or r[3] is None:
+                continue
+            recs.append((r[0], r[1], r[2], r[3], r[4], r[9], r[11], r[12]))
+        wb.close()
+        d = pd.DataFrame(recs, columns=['지역', '자치단체', '회계', '사업명',
+                                        '예산현액', '지출액', '분야', '부문'])
+        del recs
+        d['예산현액'] = pd.to_numeric(d['예산현액'], errors='coerce')
+        d['지출액'] = pd.to_numeric(d['지출액'], errors='coerce')
+        d = d.dropna(subset=['예산현액', '지출액'])
+        d = d[d['예산현액'] >= 1_000_000]
+        # 연도 내에서 먼저 집계해 행 수를 줄인다
+        d = d.groupby(['지역', '자치단체', '회계', '사업명'], as_index=False).agg(
+            {'예산현액': 'sum', '지출액': 'sum', '분야': 'first', '부문': 'first'})
+        d['연도'] = year
+        tp = os.path.join(tmp_dir, f'{year}.pkl')
+        d.to_pickle(tp)
+        tmp_paths.append(tp)
+        del d
+
+    df = pd.concat([pd.read_pickle(tp) for tp in tmp_paths], ignore_index=True)
     df['집행률'] = (df['지출액'] / df['예산현액']).clip(0, 1)
     df['uid'] = df['지역'] + '|' + df['자치단체'] + '|' + df['회계'].astype(str) + '|' + df['사업명']
     df.to_pickle(CACHE)
+    # 임시 파일 정리
+    for tp in tmp_paths:
+        os.remove(tp)
+    os.rmdir(tmp_dir)
     return df
 
 
