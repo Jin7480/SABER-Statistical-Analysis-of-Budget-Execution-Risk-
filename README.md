@@ -44,7 +44,7 @@ GPU가 필요 없고 pandas·numpy만으로 돌아가는 경량 모형이라, �
 
 ├── evaluate.py # 데이터 로드 → 백테스트 → 성능 표·그림 생성
 
-└── data/ # 비어 있음 (.gitkeep). 실행 시 자동으로 채워짐
+└── data/data_README # .gitkeep: 실행 시 자동으로 채워짐)
 
 데이터(원본 엑셀 zip 5개 + 전처리 캐시)는 용량이 커서 저장소에 포함하지 않고
 **공개 Google Drive 폴더**에 두었다. `evaluate.py`를 실행하면 `data/`가 비어 있을 때
