@@ -83,3 +83,87 @@ class SaberModel:
                    + b1[t['nb']] * (t['m_ew'] - t['M']).fillna(0),
             t['M'])  # 신규 사업: 교차 계층 앵커로 예측 (기존 방식은 예측 불가)
         return t
+
+
+# ============================================================
+# 캐시 생성 유틸리티 (독립 실행용, 자동 호출되지 않음)
+# ============================================================
+def build_cache(data_dir: str = 'data',
+                cache_path: str = 'data/panel_cache.pkl',
+                min_budget: int = 1_000_000) -> 'pd.DataFrame':
+    """원본 엑셀(연도별 세부사업별 세출현황)을 전처리해 패널 캐시를 생성·저장한다.
+
+    이 함수는 필요할 때 사용자가 직접 호출하는 유틸리티이며, 모듈 임포트 시
+    자동으로 실행되지 않는다. evaluate.py의 load_panel()과 동일한 전처리
+    (열 선택 → 정제 → 사업 단위 집계 → 집행률 계산)를 수행한다.
+
+    처리 순서:
+      1) data_dir 안의 dataset_*.zip 이 있으면 압축 해제
+      2) *_세부사업별세출현황.xlsx 를 연도별로 순차 파싱 (메모리 절약: read-only 스트리밍)
+      3) 연도별로 정제·집계 후 합쳐 집행률·uid 계산
+      4) cache_path 로 저장
+
+    매개변수:
+      data_dir    : 엑셀(및 zip)이 있는 폴더
+      cache_path  : 저장할 캐시 경로(.pkl)
+      min_budget  : 이 금액 미만의 미세 예산 항목은 제외 (기본 100만 원)
+
+    반환: 전처리된 pandas.DataFrame (저장과 동일한 내용)
+
+    사용 예:
+      python -c "from saber_model import build_cache; build_cache()"
+    """
+    import os, glob, zipfile
+    from openpyxl import load_workbook
+
+    # 1) zip 자동 해제
+    for z in glob.glob(os.path.join(data_dir, 'dataset_*.zip')):
+        with zipfile.ZipFile(z) as f:
+            f.extractall(data_dir)
+
+    # 2~3) 연도별 파싱 → 정제 → 집계
+    parts = []
+    xlsx_list = sorted(glob.glob(os.path.join(data_dir, '*_세부사업별세출현황.xlsx')))
+    if not xlsx_list:
+        raise FileNotFoundError(
+            f"{data_dir} 에서 '*_세부사업별세출현황.xlsx' 를 찾을 수 없습니다. "
+            f"엑셀 또는 dataset_*.zip 을 먼저 넣어주세요.")
+    for path in xlsx_list:
+        year = int(os.path.basename(path)[:4])
+        print(f'로드 중: {year} ...', flush=True)
+        wb = load_workbook(path, read_only=True, data_only=True)
+        ws = wb.active
+        recs = []
+        for r in ws.iter_rows(min_row=3, values_only=True):
+            if r[0] is None or r[3] is None:
+                continue
+            recs.append((r[0], r[1], r[2], r[3], r[4], r[9], r[11], r[12]))
+        wb.close()
+        d = pd.DataFrame(recs, columns=['지역', '자치단체', '회계', '사업명',
+                                        '예산현액', '지출액', '분야', '부문'])
+        del recs
+        d['예산현액'] = pd.to_numeric(d['예산현액'], errors='coerce')
+        d['지출액'] = pd.to_numeric(d['지출액'], errors='coerce')
+        d = d.dropna(subset=['예산현액', '지출액'])
+        d = d[d['예산현액'] >= min_budget]
+        d = d.groupby(['지역', '자치단체', '회계', '사업명'], as_index=False).agg(
+            {'예산현액': 'sum', '지출액': 'sum', '분야': 'first', '부문': 'first'})
+        d['연도'] = year
+        parts.append(d)
+        del d
+
+    # 4) 합치기 → 집행률·uid → 저장
+    df = pd.concat(parts, ignore_index=True)
+    del parts
+    df['집행률'] = (df['지출액'] / df['예산현액']).clip(0, 1)
+    df['uid'] = (df['지역'] + '|' + df['자치단체'] + '|'
+                 + df['회계'].astype(str) + '|' + df['사업명'])
+    os.makedirs(os.path.dirname(cache_path) or '.', exist_ok=True)
+    df.to_pickle(cache_path)
+    print(f'캐시 저장 완료: {cache_path}  ({len(df):,} 행)')
+    return df
+
+
+if __name__ == '__main__':
+    # 이 파일을 직접 실행하면 캐시를 생성한다:  python saber_model.py
+    build_cache()
